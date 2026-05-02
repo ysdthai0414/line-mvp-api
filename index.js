@@ -1,5 +1,9 @@
+// .env をロード（ローカル開発用、App Service 等の本番では設定済の環境変数を使うので no-op）
+try { require("dotenv").config(); } catch (_e) { /* dotenv 未インストールでも動く */ }
+
 const express = require("express");
 const { messagingApi, middleware } = require("@line/bot-sdk");
+const { handleEvent } = require("./src/handlers");
 
 const config = {
   channelSecret: process.env.LINE_CHANNEL_SECRET,
@@ -18,46 +22,22 @@ app.get("/", (req, res) => {
 });
 
 // LINE Webhook
-app.post("/webhook", middleware(config), (req, res) => {
-  const events = req.body.events;
+app.post("/webhook", middleware(config), async (req, res) => {
+  const events = req.body.events || [];
 
-  const results = events.map((event) => {
-    // 友だち追加時
-    if (event.type === "follow") {
-      return client.replyMessage({
-        replyToken: event.replyToken,
-        messages: [
-          {
-            type: "text",
-            text: "ようこそ「100億宣言支援AI」へ！\n\nまずは御社名と会社サイトのURLを教えてください。\n\n例：\n株式会社○○\nhttps://example.co.jp",
-          },
-        ],
-      });
-    }
+  // すべてのイベントを処理しつつ、エラーは個別にログ。
+  // LINE 側には常に200を返す（再送ループを避けるため）。
+  await Promise.all(
+    events.map(async (event) => {
+      try {
+        await handleEvent(client, event);
+      } catch (err) {
+        console.error("[webhook] event handler failed:", err);
+      }
+    })
+  );
 
-    // テキストメッセージ受信時
-    if (event.type === "message" && event.message.type === "text") {
-      const userText = event.message.text;
-      return client.replyMessage({
-        replyToken: event.replyToken,
-        messages: [
-          {
-            type: "text",
-            text: `受け取りました：\n「${userText}」\n\n（※現在MVP開発中です。今後AIがプロファイルを自動生成します）`,
-          },
-        ],
-      });
-    }
-
-    return Promise.resolve(null);
-  });
-
-  Promise.all(results)
-    .then(() => res.json({ success: true }))
-    .catch((err) => {
-      console.error("Error:", err);
-      res.status(500).json({ error: err.message });
-    });
+  res.json({ success: true });
 });
 
 const port = process.env.PORT || 8080;
