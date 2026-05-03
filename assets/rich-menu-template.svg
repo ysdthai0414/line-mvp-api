@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  100億宣言支援AI - LINE リッチメニュー雛形 (4ボタン)
+  推奨サイズ: 2500 x 1686 (Large) または 2500 x 843 (Compact)
+  本ファイルは Large (2500x1686) を採用。
+  デザイナーへの渡し時は、この SVG を参考にレイアウトの位置を変えずに装飾してください。
+  PNG変換例: inkscape --export-type=png --export-width=2500 rich-menu-template.svg
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2500 1686" width="2500" height="1686">
+  <!-- 背景 -->
+  <rect x="0" y="0" width="2500" height="1686" fill="#1F4E79"/>
+
+  <!-- セル1: 左上 マイプロファイル -->
+  <rect x="20" y="20" width="1210" height="803" fill="#FFFFFF" rx="32"/>
+  <g transform="translate(625, 421)">
+    <text x="0" y="-60" text-anchor="middle" font-family="sans-serif" font-size="120" fill="#1F4E79">👤</text>
+    <text x="0" y="60" text-anchor="middle" font-family="sans-serif" font-size="80" font-weight="bold" fill="#1F4E79">マイプロファイル</text>
+    <text x="0" y="140" text-anchor="middle" font-family="sans-serif" font-size="48" fill="#666666">登録した会社情報を見る</text>
+  </g>
+
+  <!-- セル2: 右上 配信履歴 -->
+  <rect x="1270" y="20" width="1210" height="803" fill="#FFFFFF" rx="32"/>
+  <g transform="translate(1875, 421)">
+    <text x="0" y="-60" text-anchor="middle" font-family="sans-serif" font-size="120" fill="#1F4E79">📰</text>
+    <text x="0" y="60" text-anchor="middle" font-family="sans-serif" font-size="80" font-weight="bold" fill="#1F4E79">配信履歴</text>
+    <text x="0" y="140" text-anchor="middle" font-family="sans-serif" font-size="48" fill="#666666">過去の事例配信を振り返る</text>
+  </g>
+
+  <!-- セル3: 左下 話を聞きたい一覧 -->
+  <rect x="20" y="863" width="1210" height="803" fill="#FFFFFF" rx="32"/>
+  <g transform="translate(625, 1264)">
+    <text x="0" y="-60" text-anchor="middle" font-family="sans-serif" font-size="120" fill="#1F4E79">💬</text>
+    <text x="0" y="60" text-anchor="middle" font-family="sans-serif" font-size="80" font-weight="bold" fill="#1F4E79">話を聞きたい一覧</text>
+    <text x="0" y="140" text-anchor="middle" font-family="sans-serif" font-size="48" fill="#666666">申請中の相談会先を確認</text>
+  </g>
+
+  <!-- セル4: 右下 設定 -->
+  <rect x="1270" y="863" width="1210" height="803" fill="#FFFFFF" rx="32"/>
+  <g transform="translate(1875, 1264)">
+    <text x="0" y="-60" text-anchor="middle" font-family="sans-serif" font-size="120" fill="#1F4E79">⚙</text>
+    <text x="0" y="60" text-anchor="middle" font-family="sans-serif" font-size="80" font-weight="bold" fill="#1F4E79">設定</text>
+    <text x="0" y="140" text-anchor="middle" font-family="sans-serif" font-size="48" fill="#666666">関心テーマを編集する</text>
+  </g>
+</svg>

@@ -47,6 +47,24 @@ async function findApprovedCompanies(normalizedName) {
   return rows;
 }
 
+/**
+ * 正規化済み社名 + 都道府県 で絞り込み検索。
+ * 同名衝突解消のため2段目の照合に使う。
+ *  prefecture が空文字/null の場合は findApprovedCompanies と同じ挙動。
+ */
+async function findApprovedCompaniesWithPrefecture(normalizedName, prefecture) {
+  if (!normalizedName) return [];
+  if (!prefecture) return findApprovedCompanies(normalizedName);
+  const p = getPool();
+  const [rows] = await p.execute(
+    "SELECT * FROM ApprovedCompanies " +
+    "WHERE company_name_normalized = ? AND prefecture = ? " +
+    "ORDER BY id LIMIT 5",
+    [normalizedName, prefecture]
+  );
+  return rows;
+}
+
 function classifySalesTier(annualSales) {
   if (annualSales == null) return null;
   const oku = Number(annualSales) / 100000000;
@@ -84,6 +102,43 @@ async function markNotApproved(lineUserId, companyName, companyUrl) {
     "  updated_at = CURRENT_TIMESTAMP(3)",
     [lineUserId, companyName, companyUrl]
   );
+}
+
+/**
+ * 同名衝突時に都道府県の選択を待つ状態に遷移させる。
+ * 入力された 会社名・URL は pending_* に保存し、postback で都道府県が
+ * 選択されたタイミングで再照合に使う。
+ */
+async function saveAwaitingPrefecture(lineUserId, companyName, companyUrl) {
+  const p = getPool();
+  await p.execute(
+    "INSERT INTO Users " +
+    "(line_user_id, state, pending_company_name, pending_company_url) " +
+    "VALUES (?, 'AWAITING_PREFECTURE', ?, ?) " +
+    "ON DUPLICATE KEY UPDATE " +
+    "  state = 'AWAITING_PREFECTURE', " +
+    "  pending_company_name = VALUES(pending_company_name), " +
+    "  pending_company_url = VALUES(pending_company_url), " +
+    "  pending_profile_json = NULL, " +
+    "  updated_at = CURRENT_TIMESTAMP(3)",
+    [lineUserId, companyName, companyUrl]
+  );
+}
+
+/** AWAITING_PREFECTURE 中に保存しておいた会社名/URLを取り出す */
+async function getPendingCompanyInput(lineUserId) {
+  const p = getPool();
+  const [rows] = await p.execute(
+    "SELECT pending_company_name, pending_company_url, state " +
+    "FROM Users WHERE line_user_id = ?",
+    [lineUserId]
+  );
+  if (rows.length === 0) return null;
+  return {
+    companyName: rows[0].pending_company_name || null,
+    companyUrl: rows[0].pending_company_url || null,
+    state: rows[0].state || null,
+  };
 }
 
 async function savePendingProfile(args) {
@@ -292,12 +347,191 @@ async function consumePendingInterestPick(lineUserId) {
   return result.affectedRows > 0;
 }
 
+// =====================================================================
+// リッチメニュー用 (#24)
+// =====================================================================
+
+/** 確定済みの最新 Profile を1件返す（リッチメニュー「マイプロファイル」用） */
+async function getLatestProfile(lineUserId) {
+  const p = getPool();
+  const [rows] = await p.execute(
+    "SELECT p.id, p.line_user_id, p.approved_company_id, " +
+    "       p.company_name, p.company_url, p.sales_tier, p.annual_sales, " +
+    "       p.profile_json, p.created_at, " +
+    "       ac.prefecture, ac.industry_major " +
+    "FROM Profiles p " +
+    "LEFT JOIN ApprovedCompanies ac ON ac.id = p.approved_company_id " +
+    "WHERE p.line_user_id = ? " +
+    "ORDER BY p.created_at DESC LIMIT 1",
+    [lineUserId]
+  );
+  if (rows.length === 0) return null;
+  const r = rows[0];
+  const profile =
+    typeof r.profile_json === "string"
+      ? JSON.parse(r.profile_json)
+      : r.profile_json || {};
+  return {
+    lineUserId: r.line_user_id,
+    approvedCompanyId: r.approved_company_id,
+    companyName: r.company_name,
+    companyUrl: r.company_url,
+    salesTier: r.sales_tier,
+    annualSales: r.annual_sales,
+    prefecture: r.prefecture,
+    industryMajor: r.industry_major,
+    createdAt: r.created_at,
+    profile,
+  };
+}
+
+/** 直近の配信履歴 N 件（リッチメニュー「配信履歴」用） */
+async function getRecentDeliveries(lineUserId, limit = 5) {
+  const p = getPool();
+  const safeLimit = Math.max(1, Math.min(50, parseInt(limit, 10) || 5));
+  const [rows] = await p.execute(
+    "SELECT dl.id, dl.initiative_id, dl.delivered_at, dl.feedback, " +
+    "       i.title, i.category, " +
+    "       ac.company_name " +
+    "FROM DeliveryLog dl " +
+    "JOIN Initiatives i ON i.id = dl.initiative_id " +
+    "JOIN ApprovedCompanies ac ON ac.id = i.approved_company_id " +
+    "WHERE dl.line_user_id = ? " +
+    "ORDER BY dl.delivered_at DESC LIMIT " + safeLimit,
+    [lineUserId]
+  );
+  return rows;
+}
+
+/** ユーザーの未消化「話を聞きたい」一覧（リッチメニュー「話を聞きたい一覧」用） */
+async function getPendingMatchingForUser(lineUserId, limit = 10) {
+  const p = getPool();
+  const safeLimit = Math.max(1, Math.min(50, parseInt(limit, 10) || 10));
+  const [rows] = await p.execute(
+    "SELECT mr.id, mr.target_approved_company_id, mr.status, " +
+    "       mr.requested_at, " +
+    "       ac.company_name, ac.prefecture, " +
+    "       i.title AS source_title " +
+    "FROM MatchingRequests mr " +
+    "JOIN ApprovedCompanies ac ON ac.id = mr.target_approved_company_id " +
+    "LEFT JOIN Initiatives i ON i.id = mr.source_initiative_id " +
+    "WHERE mr.line_user_id = ? AND mr.status = 'pending' " +
+    "ORDER BY mr.requested_at DESC LIMIT " + safeLimit,
+    [lineUserId]
+  );
+  return rows;
+}
+
+/**
+ * ユーザーの過去フィードバックを category 別に集計してバイアス値を返す。
+ * 使用例 (Phase 6): recommend.js の scoreInitiative に渡す。
+ * 戻り値: { "DX": +2, "M&A": -1, ... }
+ *   - helpful 1件 → +1
+ *   - not_helpful 1件 → -1
+ *   - feedback null は無視
+ */
+async function getCategoryFeedbackBias(lineUserId) {
+  const p = getPool();
+  const [rows] = await p.execute(
+    "SELECT i.category AS category, dl.feedback AS feedback, COUNT(*) AS n " +
+    "FROM DeliveryLog dl " +
+    "JOIN Initiatives i ON i.id = dl.initiative_id " +
+    "WHERE dl.line_user_id = ? " +
+    "  AND dl.feedback IN ('helpful', 'not_helpful') " +
+    "  AND i.category IS NOT NULL AND i.category <> '' " +
+    "GROUP BY i.category, dl.feedback",
+    [lineUserId]
+  );
+  const bias = {};
+  for (const r of rows) {
+    const cat = r.category;
+    const v = r.feedback === "helpful" ? Number(r.n) : -Number(r.n);
+    bias[cat] = (bias[cat] || 0) + v;
+  }
+  return bias;
+}
+
+/**
+ * 協調フィルタリング (D2):
+ * 「自分が helpful にした事例」と「他ユーザーが helpful にした事例」の重なりが
+ * 1件以上ある＝類似ユーザー、と定義し、その類似ユーザー集団が helpful にした
+ * 事例ごとの件数を返す。自分自身のフィードバックは除外する。
+ *
+ *   戻り値: { initiative_id: collabScore (=類似ユーザー何人がhelpfulしたか), ... }
+ *
+ * 例:
+ *   ユーザーA が事例 X を helpful
+ *   ユーザーB が事例 X, Y を helpful
+ *   ユーザーC が事例 X, Z を helpful
+ *   ユーザーD が事例 W を helpful （Aと共通なし）
+ *   → A の類似ユーザー = B, C （X が共通）
+ *   → A への collabScores = { Y: 1, Z: 1 }（XとWは含めない: XはAも済、WはDがAと非類似）
+ */
+async function getCollaborativeScores(lineUserId, opts = {}) {
+  const minOverlap = Math.max(1, parseInt(opts.minOverlap, 10) || 1);
+  const p = getPool();
+  // 自分が helpful にした initiatives
+  const [myRows] = await p.execute(
+    "SELECT DISTINCT initiative_id FROM DeliveryLog " +
+    "WHERE line_user_id = ? AND feedback = 'helpful'",
+    [lineUserId]
+  );
+  const myHelpful = myRows.map((r) => r.initiative_id);
+  if (myHelpful.length === 0) return {};
+
+  // myHelpful と minOverlap 件以上重複している他ユーザーを抽出
+  const placeholders = myHelpful.map(() => "?").join(",");
+  const [simRows] = await p.execute(
+    "SELECT line_user_id, COUNT(DISTINCT initiative_id) AS overlap " +
+    "FROM DeliveryLog " +
+    "WHERE feedback = 'helpful' AND line_user_id <> ? " +
+    "  AND initiative_id IN (" + placeholders + ") " +
+    "GROUP BY line_user_id " +
+    "HAVING overlap >= ?",
+    [lineUserId, ...myHelpful, minOverlap]
+  );
+  const similarUsers = simRows.map((r) => r.line_user_id);
+  if (similarUsers.length === 0) return {};
+
+  // 類似ユーザーが helpful にした initiatives を集計（自分が既に helpful したものは除外）
+  const userPlace = similarUsers.map(() => "?").join(",");
+  const myPlace = myHelpful.map(() => "?").join(",");
+  const [scoreRows] = await p.execute(
+    "SELECT initiative_id, COUNT(DISTINCT line_user_id) AS n " +
+    "FROM DeliveryLog " +
+    "WHERE feedback = 'helpful' " +
+    "  AND line_user_id IN (" + userPlace + ") " +
+    "  AND initiative_id NOT IN (" + myPlace + ") " +
+    "GROUP BY initiative_id",
+    [...similarUsers, ...myHelpful]
+  );
+  const out = {};
+  for (const r of scoreRows) {
+    out[r.initiative_id] = Number(r.n);
+  }
+  return out;
+}
+
+/** ユーザーの interests（関心テーマ）をすべてクリア（リッチメニュー「設定」用） */
+async function clearUserInterests(lineUserId) {
+  const p = getPool();
+  await p.execute(
+    "UPDATE Users SET interests = NULL, " +
+    "  updated_at = CURRENT_TIMESTAMP(3) " +
+    "WHERE line_user_id = ?",
+    [lineUserId]
+  );
+}
+
 module.exports = {
   getPool,
   findApprovedCompanies,
+  findApprovedCompaniesWithPrefecture,
   classifySalesTier,
   getOrCreateUser,
   markNotApproved,
+  saveAwaitingPrefecture,
+  getPendingCompanyInput,
   savePendingProfile,
   commitPendingProfile,
   discardPendingProfile,
@@ -310,4 +544,13 @@ module.exports = {
   // Phase 4
   setPendingInterestPicks,
   consumePendingInterestPick,
+  // Rich Menu (#24)
+  getLatestProfile,
+  getRecentDeliveries,
+  getPendingMatchingForUser,
+  clearUserInterests,
+  // Phase 6 (フィードバック→レコメンド改善)
+  getCategoryFeedbackBias,
+  // D2 (協調フィルタリング)
+  getCollaborativeScores,
 };

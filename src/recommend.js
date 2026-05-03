@@ -1,8 +1,16 @@
-// レコメンドロジック (Phase 3)
+// レコメンドロジック (Phase 3 / Phase 6)
 // ユーザーの sales_tier より上のフェーズの Initiatives から、
 // 業界 / 経営テーマ / 明示された関心 / 嫌ったカテゴリ を勘案してスコア付け、
 // 過去配信済みを除いて上位N件を返す。
-const { getPool, getUserPreferences } = require("./db");
+//
+// Phase 6 (2026-05-03): 過去 helpful/not_helpful フィードバックの category 単位
+//   集計をバイアスとして加味する。
+const {
+  getPool,
+  getUserPreferences,
+  getCategoryFeedbackBias,
+  getCollaborativeScores,
+} = require("./db");
 
 // 売上フェーズの順位（数字が大きいほど100億に近い）
 const TIER_RANK = {
@@ -30,10 +38,16 @@ const SCORE_WEIGHT = {
   theme: 3,
   interest: 4, // 明示された関心は最重要視
   disliked: -3, // 嫌ったカテゴリはペナルティ
+  feedback_category: 1, // Phase 6: 過去 helpful/not_helpful の累計を category 単位で加算
+  collab: 1.5, // D2: 類似ユーザー集団の helpful 件数（暗黙シグナル、明示より弱め）
 };
+
+// D2: 協調スコアの上限（1件の人気事例で過剰加点を防ぐ）
+const COLLAB_SCORE_CAP = 5;
 
 /**
  * 確定済みプロファイルとユーザー情報を取得。
+ * Phase 6 で feedbackBias (category 単位の過去フィードバック累計) も併せて取得。
  */
 async function getUserContext(lineUserId) {
   const pool = getPool();
@@ -53,6 +67,8 @@ async function getUserContext(lineUserId) {
       ? JSON.parse(r.profile_json)
       : r.profile_json || {};
   const prefs = await getUserPreferences(lineUserId);
+  const feedbackBias = await getCategoryFeedbackBias(lineUserId);
+  const collabScores = await getCollaborativeScores(lineUserId);
   return {
     lineUserId: r.line_user_id,
     salesTier: r.sales_tier,
@@ -61,6 +77,8 @@ async function getUserContext(lineUserId) {
     profile,
     interests: prefs.interests,
     dislikedCategories: prefs.dislikedCategories,
+    feedbackBias, // { "DX": +2, "M&A": -1, ... }
+    collabScores, // D2: { initiative_id: count, ... }
   };
 }
 
@@ -101,7 +119,8 @@ async function getCandidateInitiatives(userCtx) {
 
 /**
  * Initiative を1件スコアリング。
- * 戻り値: { score, reasons: { industries: [], themes: [], interests: [], penalty: bool } }
+ * 戻り値: { score, reasons: { industries: [], themes: [], interests: [],
+ *                              penalty: bool, feedbackBias: number } }
  */
 function scoreInitiative(userCtx, init) {
   const profile = userCtx.profile || {};
@@ -130,11 +149,23 @@ function scoreInitiative(userCtx, init) {
 
   const penalty = dislikedSet.has(initCategoryKey);
 
+  // Phase 6: フィードバックバイアス（category単位）
+  const feedbackBiasRaw =
+    (userCtx.feedbackBias && init.category &&
+      userCtx.feedbackBias[init.category]) || 0;
+
+  // D2: 協調スコア（類似ユーザー集団が helpful にした件数、上限あり）
+  const collabRaw =
+    (userCtx.collabScores && userCtx.collabScores[init.id]) || 0;
+  const collabCapped = Math.min(collabRaw, COLLAB_SCORE_CAP);
+
   const score =
     matchedIndustries.length * SCORE_WEIGHT.industry +
     matchedThemes.length * SCORE_WEIGHT.theme +
     matchedInterests.length * SCORE_WEIGHT.interest +
-    (penalty ? SCORE_WEIGHT.disliked : 0);
+    (penalty ? SCORE_WEIGHT.disliked : 0) +
+    feedbackBiasRaw * SCORE_WEIGHT.feedback_category +
+    collabCapped * SCORE_WEIGHT.collab;
 
   return {
     score,
@@ -144,6 +175,9 @@ function scoreInitiative(userCtx, init) {
       interests: matchedInterests,
       category: init.category || null,
       penalty,
+      feedbackBias: feedbackBiasRaw, // 0 なら影響なし、+/- でフィードバック反映済み
+      collab: collabRaw, // D2: 類似ユーザー何人が helpful にしたか（上限なしの生値）
+      collabCapped, // 実際にスコアに使われた値
     },
   };
 }
@@ -194,4 +228,5 @@ module.exports = {
   isHigherPhase,
   TIER_RANK,
   SCORE_WEIGHT,
+  COLLAB_SCORE_CAP,
 };

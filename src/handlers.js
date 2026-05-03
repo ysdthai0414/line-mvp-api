@@ -2,6 +2,8 @@
 const {
   getOrCreateUser,
   markNotApproved,
+  saveAwaitingPrefecture,
+  getPendingCompanyInput,
   savePendingProfile,
   commitPendingProfile,
   discardPendingProfile,
@@ -16,15 +18,23 @@ const {
 const {
   parseCompanyAndUrl,
   checkApproval,
+  resolveByPrefecture,
+  uniquePrefectures,
   buildProfileForApproved,
 } = require("./onboarding");
 const {
   buildProfileConfirmFlex,
   buildSingleDeliveryFlex,
+  buildPrefectureQuickReply,
 } = require("./flex");
 const { recordMatchingRequest } = require("./matching");
 const { recommendForUser } = require("./recommend");
 const { buildCategoryQuickReply } = require("./categories");
+const { dispatchMenuPostback } = require("./menu_handlers");
+const {
+  setParticipantStatus,
+  getEvent,
+} = require("./consultation");
 
 const WELCOME_TEXT =
   "ようこそ「100億宣言支援AI」へ！\n\n" +
@@ -58,6 +68,32 @@ const INITIAL_DELIVERY_INTRO =
 const RESTART_TEXT =
   "了解しました。改めて、御社名と会社サイトのURLを教えてください。\n\n" +
   "例：\n株式会社○○\nhttps://example.co.jp";
+
+const PREFECTURE_PROMPT_TEXT =
+  "認可リストに同じ会社名が複数あります🙏\n" +
+  "御社の本社所在地（都道府県）を下記から選んでください👇";
+
+const AWAITING_PREFECTURE_HINT_TEXT =
+  "お送りいただいた会社名で複数候補があります。\n" +
+  "下のメッセージのボタンから本社所在地（都道府県）を選んでください🙏";
+
+const PREFECTURE_NO_MATCH_TEXT =
+  "申し訳ありません🙏\n" +
+  "選択された都道府県では認可済企業として該当が見つかりませんでした。\n" +
+  "もう一度、会社名とURLを送り直してください。";
+
+const CONSULT_JOIN_THANKS_TEXT_BASE =
+  "ありがとうございます！相談会への参加を承りました🎉\n" +
+  "開催日時が近づいたら、改めてリマインドをお送りします。";
+
+const CONSULT_DECLINE_THANKS_TEXT =
+  "教えてくださりありがとうございます。\n" +
+  "今回は見送りで承知しました。今後また気になる企業の事例があれば、" +
+  "ぜひお気軽に「話を聞きたい」を押してください🙏";
+
+const CONSULT_NOT_FOUND_TEXT =
+  "申し訳ありません🙏\n" +
+  "対象の相談会が見つかりませんでした。事務局までお問い合わせください。";
 
 const HEAR_THANKS_TEXT =
   "ありがとうございます！\n" +
@@ -120,6 +156,19 @@ async function handleTextMessage(client, event) {
     return;
   }
 
+  if (user.state === "AWAITING_PREFECTURE") {
+    await client.replyMessage({
+      replyToken: event.replyToken,
+      messages: [
+        {
+          type: "text",
+          text: AWAITING_PREFECTURE_HINT_TEXT,
+        },
+      ],
+    });
+    return;
+  }
+
   const parsed = parseCompanyAndUrl(text);
   if (!parsed) {
     await client.replyMessage({
@@ -163,12 +212,63 @@ async function handleTextMessage(client, event) {
       "->",
       approval.allCandidates.map((c) => c.corporate_number)
     );
+    const prefectures = uniquePrefectures(approval.allCandidates);
+    if (prefectures.length >= 2) {
+      // 都道府県で絞り込めるケース：AWAITING_PREFECTURE に遷移して QR を出す
+      await saveAwaitingPrefecture(
+        userId,
+        parsed.companyName,
+        parsed.companyUrl
+      );
+      await client.replyMessage({
+        replyToken: event.replyToken,
+        messages: [
+          {
+            type: "text",
+            text: PREFECTURE_PROMPT_TEXT,
+            quickReply: buildPrefectureQuickReply(prefectures),
+          },
+        ],
+      });
+      return;
+    }
+    // 都道府県情報で絞り込めないレアケース：先頭採用（既存挙動）
+    console.warn(
+      "[handlers] cannot disambiguate by prefecture, falling back to first candidate"
+    );
   }
 
-  await client.replyMessage({
+  await runProfileGeneration(client, {
+    userId,
     replyToken: event.replyToken,
-    messages: [{ type: "text", text: BUSY_TEXT }],
+    companyName: parsed.companyName,
+    companyUrl: parsed.companyUrl,
+    approvedCompany: approval.candidate,
   });
+}
+
+/**
+ * 認可済企業を1社特定したあとの共通フロー：
+ *   replyToken で BUSY テキストを返す → ローディングアニメ → AI生成 → push
+ */
+async function runProfileGeneration(client, args) {
+  const { userId, replyToken, companyName, companyUrl, approvedCompany } = args;
+
+  if (replyToken) {
+    try {
+      await client.replyMessage({
+        replyToken,
+        messages: [{ type: "text", text: BUSY_TEXT }],
+      });
+    } catch (e) {
+      console.warn("[handlers] BUSY reply failed:", e.message);
+    }
+  } else {
+    await client.pushMessage({
+      to: userId,
+      messages: [{ type: "text", text: BUSY_TEXT }],
+    });
+  }
 
   try {
     if (typeof client.showLoadingAnimation === "function") {
@@ -180,24 +280,24 @@ async function handleTextMessage(client, event) {
 
   try {
     const { profile, annualSales, salesTier } = await buildProfileForApproved({
-      companyName: parsed.companyName,
-      companyUrl: parsed.companyUrl,
-      approvedCompany: approval.candidate,
+      companyName,
+      companyUrl,
+      approvedCompany,
     });
 
     await savePendingProfile({
       lineUserId: userId,
-      companyName: parsed.companyName,
-      companyUrl: parsed.companyUrl,
-      approvedCompanyId: approval.candidate.id,
+      companyName,
+      companyUrl,
+      approvedCompanyId: approvedCompany.id,
       annualSales,
       salesTier,
       profile,
     });
 
     const flex = buildProfileConfirmFlex({
-      companyName: parsed.companyName,
-      companyUrl: parsed.companyUrl,
+      companyName,
+      companyUrl,
       profile,
       salesTier,
       annualSales,
@@ -257,9 +357,12 @@ async function pushFirstDelivery(client, lineUserId) {
  * postback ハンドラ
  *   action=confirm
  *   action=retry
+ *   action=prefecture&value=東京都
  *   action=hear&initiative_id=X&company_id=Y
  *   action=feedback&initiative_id=X&value=helpful|not_helpful
  *   action=interest&category=Y
+ *   action=menu&item=profile|history|offers|settings|settings_reset    ← #24
+ *   action=consult&event_id=N&value=join|decline                       ← Phase 3b-2
  */
 async function handlePostback(client, event) {
   const userId = event.source.userId;
@@ -297,6 +400,79 @@ async function handlePostback(client, event) {
       replyToken: event.replyToken,
       messages: [{ type: "text", text: RESTART_TEXT }],
     });
+    return;
+  }
+
+  if (action === "prefecture") {
+    const prefecture = params.get("value");
+    if (!prefecture) {
+      console.warn("[handlers] prefecture postback missing value:", data);
+      return;
+    }
+    try {
+      const pending = await getPendingCompanyInput(userId);
+      if (
+        !pending ||
+        pending.state !== "AWAITING_PREFECTURE" ||
+        !pending.companyName ||
+        !pending.companyUrl
+      ) {
+        console.warn(
+          "[handlers] prefecture postback received but no AWAITING_PREFECTURE pending:",
+          { userId, state: pending && pending.state }
+        );
+        await client.replyMessage({
+          replyToken: event.replyToken,
+          messages: [{ type: "text", text: RESTART_TEXT }],
+        });
+        await discardPendingProfile(userId);
+        return;
+      }
+
+      const resolved = await resolveByPrefecture(
+        pending.companyName,
+        prefecture
+      );
+      if (!resolved.matched) {
+        await client.replyMessage({
+          replyToken: event.replyToken,
+          messages: [{ type: "text", text: PREFECTURE_NO_MATCH_TEXT }],
+        });
+        await discardPendingProfile(userId);
+        return;
+      }
+      if (resolved.ambiguous) {
+        // 同名 × 同都道府県の希少ケース：先頭採用 + 警告ログ
+        console.warn(
+          "[handlers] same prefecture duplicate, using first candidate:",
+          {
+            companyName: pending.companyName,
+            prefecture,
+            candidates: resolved.allCandidates.map((c) => c.corporate_number),
+          }
+        );
+      }
+
+      await runProfileGeneration(client, {
+        userId,
+        replyToken: event.replyToken,
+        companyName: pending.companyName,
+        companyUrl: pending.companyUrl,
+        approvedCompany: resolved.candidate,
+      });
+    } catch (err) {
+      console.error("[handlers] prefecture postback failed:", err);
+      await client.replyMessage({
+        replyToken: event.replyToken,
+        messages: [
+          {
+            type: "text",
+            text:
+              "処理中にエラーが発生しました🙏 もう一度、会社名とURLから送り直してください。",
+          },
+        ],
+      });
+    }
     return;
   }
 
@@ -371,6 +547,104 @@ async function handlePostback(client, event) {
       });
     } catch (err) {
       console.error("[handlers] feedback failed:", err);
+    }
+    return;
+  }
+
+  if (action === "menu") {
+    const item = params.get("item");
+    if (!item) {
+      console.warn("[handlers] menu postback missing item:", data);
+      return;
+    }
+    try {
+      const { messages } = await dispatchMenuPostback(userId, item);
+      await client.replyMessage({
+        replyToken: event.replyToken,
+        messages,
+      });
+    } catch (err) {
+      console.error("[handlers] menu dispatch failed:", err);
+      await client.replyMessage({
+        replyToken: event.replyToken,
+        messages: [
+          {
+            type: "text",
+            text:
+              "メニュー処理中にエラーが発生しました🙏 少し時間をおいて再度お試しください。",
+          },
+        ],
+      });
+    }
+    return;
+  }
+
+  if (action === "consult") {
+    const eventId = parseInt(params.get("event_id") || "0", 10);
+    const value = params.get("value");
+    if (!eventId || !["join", "decline"].includes(value)) {
+      console.warn("[handlers] consult postback malformed:", data);
+      return;
+    }
+    try {
+      const consultEvent = await getEvent(eventId);
+      if (!consultEvent) {
+        await client.replyMessage({
+          replyToken: event.replyToken,
+          messages: [{ type: "text", text: CONSULT_NOT_FOUND_TEXT }],
+        });
+        return;
+      }
+      const newStatus = value === "join" ? "joined" : "declined";
+      const ok = await setParticipantStatus(eventId, userId, newStatus);
+      if (!ok) {
+        // 該当 invited なし → ユーザーは participants に登録されていない
+        console.warn(
+          "[handlers] consult postback: no matching participant",
+          { eventId, userId, value }
+        );
+        await client.replyMessage({
+          replyToken: event.replyToken,
+          messages: [
+            {
+              type: "text",
+              text:
+                "この相談会へのご招待が確認できませんでした🙏 事務局までお問い合わせください。",
+            },
+          ],
+        });
+        return;
+      }
+
+      if (value === "join") {
+        const lines = [CONSULT_JOIN_THANKS_TEXT_BASE];
+        if (consultEvent.zoom_url) {
+          lines.push(
+            "\n👇 当日の Zoom URL：\n" + consultEvent.zoom_url
+          );
+        }
+        await client.replyMessage({
+          replyToken: event.replyToken,
+          messages: [{ type: "text", text: lines.join("\n") }],
+        });
+      } else {
+        await client.replyMessage({
+          replyToken: event.replyToken,
+          messages: [{ type: "text", text: CONSULT_DECLINE_THANKS_TEXT }],
+        });
+      }
+    } catch (err) {
+      console.error("[handlers] consult postback failed:", err);
+      await client.replyMessage({
+        replyToken: event.replyToken,
+        messages: [
+          {
+            type: "text",
+            text:
+              "受付中にエラーが発生しました🙏 少し時間をおいて再度お試しください。",
+          },
+        ],
+      });
     }
     return;
   }

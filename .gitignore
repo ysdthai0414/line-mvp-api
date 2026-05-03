@@ -25,3 +25,6 @@ yarn-error.log*
 
 # Excel取り込み元（再現はsenrgenkigyoichiran.xlsxの再ダウンロードでOK）
 *.xlsx
+
+# ローカル調査・デバッグ用 SQL（`_` プレフィックスは一時ファイル）
+db/_*.sql

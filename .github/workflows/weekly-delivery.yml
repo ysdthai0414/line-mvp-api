@@ -1,0 +1,80 @@
+# =============================================================
+# 週1配信スケジューラ (Phase A1)
+#
+# 毎週月曜 09:00 JST = 月曜 00:00 UTC に発火し、
+# App Service の /admin/run-delivery を叩いて配信を実行する。
+#
+# 必要な GitHub Secrets:
+#   APP_SERVICE_URL  例: https://tech0-gen-11-step4-node-3.azurewebsites.net
+#   ADMIN_TOKEN      App Service 側の環境変数 ADMIN_TOKEN と同じ値
+#
+# 手動実行も可能（workflow_dispatch）。動作確認時は --dry-run 相当の
+# 引数（payload に dryRun:true）で叩ける。
+# =============================================================
+name: Weekly Delivery
+
+on:
+  schedule:
+    # 月曜 00:00 UTC = 月曜 09:00 JST
+    - cron: "0 0 * * 1"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Set to 'true' to skip LINE push (dry run)"
+        required: false
+        default: "false"
+      limit:
+        description: "Number of recommendations per user (default 3)"
+        required: false
+        default: "3"
+
+jobs:
+  deliver:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Validate secrets
+        run: |
+          if [ -z "${{ secrets.APP_SERVICE_URL }}" ]; then
+            echo "::error::APP_SERVICE_URL secret is required"
+            exit 1
+          fi
+          if [ -z "${{ secrets.ADMIN_TOKEN }}" ]; then
+            echo "::error::ADMIN_TOKEN secret is required"
+            exit 1
+          fi
+
+      - name: Trigger /admin/run-delivery
+        env:
+          APP_SERVICE_URL: ${{ secrets.APP_SERVICE_URL }}
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+          LIMIT: ${{ github.event.inputs.limit || '3' }}
+        run: |
+          set -euo pipefail
+          URL="${APP_SERVICE_URL%/}/admin/run-delivery"
+          PAYLOAD=$(printf '{"dryRun": %s, "limit": %s}' \
+            "$([ "$DRY_RUN" = "true" ] && echo true || echo false)" \
+            "$LIMIT")
+          echo "POST $URL"
+          echo "Payload: $PAYLOAD"
+          HTTP_CODE=$(curl -sS -o response.json -w "%{http_code}" \
+            -X POST "$URL" \
+            -H "Content-Type: application/json" \
+            -H "X-Admin-Token: $ADMIN_TOKEN" \
+            --data "$PAYLOAD" \
+            --max-time 1500)
+          echo "HTTP $HTTP_CODE"
+          cat response.json
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::delivery endpoint returned $HTTP_CODE"
+            exit 1
+          fi
+
+      - name: Summarize result
+        if: always()
+        run: |
+          if [ -f response.json ]; then
+            echo "----- response -----"
+            cat response.json
+          fi
