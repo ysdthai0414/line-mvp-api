@@ -30,6 +30,11 @@ const {
 const { recordMatchingRequest } = require("./matching");
 const { recommendForUser } = require("./recommend");
 const { buildCategoryQuickReply } = require("./categories");
+const { dispatchMenuPostback } = require("./menu_handlers");
+const {
+  setParticipantStatus,
+  getEvent,
+} = require("./consultation");
 
 const WELCOME_TEXT =
   "ようこそ「100億宣言支援AI」へ！\n\n" +
@@ -76,6 +81,19 @@ const PREFECTURE_NO_MATCH_TEXT =
   "申し訳ありません🙏\n" +
   "選択された都道府県では認可済企業として該当が見つかりませんでした。\n" +
   "もう一度、会社名とURLを送り直してください。";
+
+const CONSULT_JOIN_THANKS_TEXT_BASE =
+  "ありがとうございます！相談会への参加を承りました🎉\n" +
+  "開催日時が近づいたら、改めてリマインドをお送りします。";
+
+const CONSULT_DECLINE_THANKS_TEXT =
+  "教えてくださりありがとうございます。\n" +
+  "今回は見送りで承知しました。今後また気になる企業の事例があれば、" +
+  "ぜひお気軽に「話を聞きたい」を押してください🙏";
+
+const CONSULT_NOT_FOUND_TEXT =
+  "申し訳ありません🙏\n" +
+  "対象の相談会が見つかりませんでした。事務局までお問い合わせください。";
 
 const HEAR_THANKS_TEXT =
   "ありがとうございます！\n" +
@@ -343,6 +361,8 @@ async function pushFirstDelivery(client, lineUserId) {
  *   action=hear&initiative_id=X&company_id=Y
  *   action=feedback&initiative_id=X&value=helpful|not_helpful
  *   action=interest&category=Y
+ *   action=menu&item=profile|history|offers|settings|settings_reset    ← #24
+ *   action=consult&event_id=N&value=join|decline                       ← Phase 3b-2
  */
 async function handlePostback(client, event) {
   const userId = event.source.userId;
@@ -527,6 +547,104 @@ async function handlePostback(client, event) {
       });
     } catch (err) {
       console.error("[handlers] feedback failed:", err);
+    }
+    return;
+  }
+
+  if (action === "menu") {
+    const item = params.get("item");
+    if (!item) {
+      console.warn("[handlers] menu postback missing item:", data);
+      return;
+    }
+    try {
+      const { messages } = await dispatchMenuPostback(userId, item);
+      await client.replyMessage({
+        replyToken: event.replyToken,
+        messages,
+      });
+    } catch (err) {
+      console.error("[handlers] menu dispatch failed:", err);
+      await client.replyMessage({
+        replyToken: event.replyToken,
+        messages: [
+          {
+            type: "text",
+            text:
+              "メニュー処理中にエラーが発生しました🙏 少し時間をおいて再度お試しください。",
+          },
+        ],
+      });
+    }
+    return;
+  }
+
+  if (action === "consult") {
+    const eventId = parseInt(params.get("event_id") || "0", 10);
+    const value = params.get("value");
+    if (!eventId || !["join", "decline"].includes(value)) {
+      console.warn("[handlers] consult postback malformed:", data);
+      return;
+    }
+    try {
+      const consultEvent = await getEvent(eventId);
+      if (!consultEvent) {
+        await client.replyMessage({
+          replyToken: event.replyToken,
+          messages: [{ type: "text", text: CONSULT_NOT_FOUND_TEXT }],
+        });
+        return;
+      }
+      const newStatus = value === "join" ? "joined" : "declined";
+      const ok = await setParticipantStatus(eventId, userId, newStatus);
+      if (!ok) {
+        // 該当 invited なし → ユーザーは participants に登録されていない
+        console.warn(
+          "[handlers] consult postback: no matching participant",
+          { eventId, userId, value }
+        );
+        await client.replyMessage({
+          replyToken: event.replyToken,
+          messages: [
+            {
+              type: "text",
+              text:
+                "この相談会へのご招待が確認できませんでした🙏 事務局までお問い合わせください。",
+            },
+          ],
+        });
+        return;
+      }
+
+      if (value === "join") {
+        const lines = [CONSULT_JOIN_THANKS_TEXT_BASE];
+        if (consultEvent.zoom_url) {
+          lines.push(
+            "\n👇 当日の Zoom URL：\n" + consultEvent.zoom_url
+          );
+        }
+        await client.replyMessage({
+          replyToken: event.replyToken,
+          messages: [{ type: "text", text: lines.join("\n") }],
+        });
+      } else {
+        await client.replyMessage({
+          replyToken: event.replyToken,
+          messages: [{ type: "text", text: CONSULT_DECLINE_THANKS_TEXT }],
+        });
+      }
+    } catch (err) {
+      console.error("[handlers] consult postback failed:", err);
+      await client.replyMessage({
+        replyToken: event.replyToken,
+        messages: [
+          {
+            type: "text",
+            text:
+              "受付中にエラーが発生しました🙏 少し時間をおいて再度お試しください。",
+          },
+        ],
+      });
     }
     return;
   }

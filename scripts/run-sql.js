@@ -59,11 +59,17 @@ async function main() {
 
   try {
     for (const f of files) {
-      const sql = fs.readFileSync(f, "utf8");
+      // UTF-8 BOM (﻿) を剥がす（PowerShell の Out-File -Encoding utf8 等で混入する）
+      const sql = fs.readFileSync(f, "utf8").replace(/^﻿/, "");
       console.log("\n=== " + f + " ===");
       const [results] = await conn.query(sql);
-      // 複文の場合 results は配列の配列。SELECT の結果だけ表で出す。
-      const arr = Array.isArray(results) ? results : [results];
+      // 単文SELECTのとき results は行の配列、複文のとき配列の配列になる。
+      // 行の配列(=要素がオブジェクト) は単文として1階層に包む。
+      const isMultiStatement =
+        Array.isArray(results) &&
+        results.length > 0 &&
+        Array.isArray(results[0]);
+      const arr = isMultiStatement ? results : [results];
       for (const r of arr) {
         if (Array.isArray(r) && r.length > 0 && typeof r[0] === "object") {
           console.table(r);

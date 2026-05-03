@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>配信履歴 — 100億宣言支援AI</title>
+  <!-- LIFF SDK v2 -->
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <style>
+    :root {
+      --primary: #1F4E79;
+      --primary-light: #EAF1F8;
+      --bg: #F5F7FA;
+      --card-bg: #FFFFFF;
+      --text: #1F2937;
+      --text-secondary: #6B7280;
+      --border: #E5E7EB;
+      --positive: #10B981;
+      --negative: #EF4444;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", "Hiragino Sans", "Yu Gothic UI", "Meiryo", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    header {
+      background: var(--primary);
+      color: white;
+      padding: 16px 20px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    header h1 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 700;
+    }
+    header .sub {
+      font-size: 12px;
+      color: rgba(255,255,255,0.85);
+      margin-top: 2px;
+    }
+    main {
+      padding: 16px 12px 24px;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+    .status {
+      text-align: center;
+      padding: 32px 20px;
+      color: var(--text-secondary);
+      font-size: 14px;
+    }
+    .status.error { color: var(--negative); }
+    .item {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 16px;
+      margin-bottom: 12px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+    .item .meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin-bottom: 6px;
+    }
+    .item .feedback {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      font-size: 13px;
+      flex-shrink: 0;
+    }
+    .item .feedback.helpful { background: #D1FAE5; color: var(--positive); }
+    .item .feedback.not_helpful { background: #FEE2E2; color: var(--negative); }
+    .item .feedback.none { background: #F3F4F6; color: var(--text-secondary); }
+    .item .date { flex-shrink: 0; }
+    .item .category {
+      background: var(--primary-light);
+      color: var(--primary);
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-weight: 600;
+      font-size: 10px;
+    }
+    .item h3 {
+      margin: 4px 0 6px;
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--primary);
+      line-height: 1.4;
+    }
+    .item .company {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-bottom: 0;
+    }
+    footer {
+      text-align: center;
+      padding: 24px 16px 40px;
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+    .reload {
+      display: block;
+      margin: 24px auto 0;
+      background: white;
+      border: 1px solid var(--border);
+      color: var(--primary);
+      padding: 8px 18px;
+      border-radius: 999px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .reload:active { background: var(--primary-light); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>📰 配信履歴</h1>
+    <div class="sub">過去にお届けした事例を振り返れます</div>
+  </header>
+  <main id="main">
+    <div class="status" id="status">読み込み中…</div>
+  </main>
+  <footer>
+    100億宣言支援AI / 直近30件まで表示
+    <button class="reload" id="reload" hidden>もう一度読み込む</button>
+  </footer>
+
+  <script>
+  // ============================================================
+  // LIFF アプリ: 配信履歴ビューワ (B3)
+  // ============================================================
+  // クエリ ?_mockUserId=Uxxx でローカル動作確認可能
+  // 本番では LIFF SDK の ID Token を Bearer で送る
+  //
+  // 設定:
+  //   - <meta name="liff-id"> の content に LIFF ID を埋めるか、
+  //     URL クエリ ?liffId=... から取る（運用時は HTML 側に埋め込み推奨）
+  // ============================================================
+
+  const STATUS = document.getElementById("status");
+  const MAIN = document.getElementById("main");
+  const RELOAD = document.getElementById("reload");
+
+  function getQueryParam(key) {
+    const u = new URL(window.location.href);
+    return u.searchParams.get(key);
+  }
+
+  function getLiffId() {
+    return (
+      getQueryParam("liffId") ||
+      (document.querySelector('meta[name="liff-id"]') || {}).content ||
+      ""
+    );
+  }
+
+  function fmtDate(iso) {
+    if (!iso) return "—";
+    try {
+      const d = new Date(iso);
+      const Y = d.getFullYear();
+      const M = String(d.getMonth() + 1).padStart(2, "0");
+      const D = String(d.getDate()).padStart(2, "0");
+      return Y + "/" + M + "/" + D;
+    } catch (_e) {
+      return String(iso).slice(0, 10);
+    }
+  }
+
+  function feedbackBadge(fb) {
+    if (fb === "helpful") return '<span class="feedback helpful" title="マッチ">👍</span>';
+    if (fb === "not_helpful") return '<span class="feedback not_helpful" title="マッチせず">👎</span>';
+    return '<span class="feedback none" title="未評価">・</span>';
+  }
+
+  function escapeHtml(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function renderItems(items) {
+    if (!items || items.length === 0) {
+      MAIN.innerHTML =
+        '<div class="status">まだ配信履歴がありません。<br>' +
+        '初回プロファイル登録から最初の配信までは少しタイムラグがあります🙏</div>';
+      return;
+    }
+    const html = items.map(function (it) {
+      const date = fmtDate(it.delivered_at);
+      const fb = feedbackBadge(it.feedback);
+      const cat = it.category
+        ? '<span class="category">' + escapeHtml(it.category) + "</span>"
+        : "";
+      const title = escapeHtml(it.title || "（無題）");
+      const company = escapeHtml(it.company_name || "—");
+      return (
+        '<article class="item">' +
+        '<div class="meta">' + fb +
+        '<span class="date">' + date + "</span>" +
+        cat +
+        "</div>" +
+        '<h3>' + title + "</h3>" +
+        '<div class="company">' + company + "</div>" +
+        "</article>"
+      );
+    }).join("");
+    MAIN.innerHTML = html;
+  }
+
+  async function fetchHistory(token) {
+    const res = await fetch("/api/me/deliveries?limit=30", {
+      headers: { Authorization: "Bearer " + token },
+      credentials: "omit",
+    });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      throw new Error(
+        "API " + res.status + ": " + (j.error || "unknown error")
+      );
+    }
+    const data = await res.json();
+    return data.items || [];
+  }
+
+  async function setStatus(text, isError) {
+    STATUS.textContent = text;
+    STATUS.className = "status" + (isError ? " error" : "");
+    MAIN.innerHTML = "";
+    MAIN.appendChild(STATUS);
+  }
+
+  async function main() {
+    RELOAD.hidden = true;
+    try {
+      // ローカル開発モード（LIFF をスキップして dev-mock 使用）
+      const mockUserId = getQueryParam("_mockUserId");
+      let token;
+      if (mockUserId) {
+        token = "dev-mock";
+      } else {
+        // LIFF 初期化
+        const liffId = getLiffId();
+        if (!liffId) {
+          throw new Error("LIFF ID が設定されていません");
+        }
+        await liff.init({ liffId: liffId });
+        if (!liff.isLoggedIn()) {
+          liff.login();
+          return; // login がリダイレクトする
+        }
+        token = liff.getIDToken();
+        if (!token) {
+          throw new Error("LIFF ID Token を取得できません");
+        }
+      }
+      const items = await fetchHistory(token);
+      renderItems(items);
+    } catch (err) {
+      console.error(err);
+      setStatus("読み込みに失敗しました🙏\n" + (err.message || err), true);
+      RELOAD.hidden = false;
+    }
+  }
+
+  RELOAD.addEventListener("click", function () {
+    setStatus("読み込み中…", false);
+    main();
+  });
+
+  main();
+  </script>
+</body>
+</html>

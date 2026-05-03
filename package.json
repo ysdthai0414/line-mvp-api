@@ -5,10 +5,15 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "check": "node --check index.js && node --check src/handlers.js && node --check src/onboarding.js && node --check src/db.js && node --check src/scraper.js && node --check src/ai.js && node --check src/flex.js && node --check src/match.js && node --check src/recommend.js && node --check src/matching.js && node --check src/categories.js && node --check scripts/import-approved-companies.js && node --check scripts/run-delivery.js && node --check scripts/run-sql.js && node --check scripts/test-prefecture-flow.js",
+    "check": "node --check index.js && node --check src/handlers.js && node --check src/onboarding.js && node --check src/db.js && node --check src/scraper.js && node --check src/ai.js && node --check src/flex.js && node --check src/match.js && node --check src/recommend.js && node --check src/matching.js && node --check src/categories.js && node --check src/pdf.js && node --check src/initiative_ai.js && node --check src/notify.js && node --check src/menu_handlers.js && node --check src/consultation.js && node --check src/delivery_runner.js && node --check src/error_notifier.js && node --check src/reason_ai.js && node --check src/liff_auth.js && node --check scripts/import-approved-companies.js && node --check scripts/run-delivery.js && node --check scripts/run-sql.js && node --check scripts/test-prefecture-flow.js && node --check scripts/import-initiatives.js && node --check scripts/test-delivery-recommendation.js && node --check scripts/check-matching-threshold.js && node --check scripts/test-matching-threshold.js && node --check scripts/setup-rich-menu.js && node --check scripts/test-menu-handlers.js && node --check scripts/create-consultation.js && node --check scripts/test-consultation-flow.js && node --check scripts/push-consultation-invites.js && node --check scripts/test-consultation-invite.js && node --check scripts/run-consultation-reminders.js && node --check scripts/test-consultation-reminders.js && node --check scripts/test-feedback-recommend.js && node --check scripts/test-delivery-runner.js && node --check scripts/test-error-notifier.js && node --check scripts/test-reason-ai.js && node --check scripts/test-liff-history.js && node --check scripts/test-collaborative-recommend.js",
     "import:approved": "node scripts/import-approved-companies.js",
+    "import:initiatives": "node scripts/import-initiatives.js",
     "sql": "node scripts/run-sql.js",
-    "deliver": "node scripts/run-delivery.js"
+    "deliver": "node scripts/run-delivery.js",
+    "check:threshold": "node scripts/check-matching-threshold.js",
+    "consult": "node scripts/create-consultation.js",
+    "consult:push": "node scripts/push-consultation-invites.js",
+    "consult:reminders": "node scripts/run-consultation-reminders.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",
@@ -17,6 +22,7 @@
     "dotenv": "^16.4.5",
     "express": "^4.18.2",
     "mysql2": "^3.11.0",
+    "pdf-parse": "^1.1.1",
     "xlsx": "^0.18.5"
   },
   "engines": {
