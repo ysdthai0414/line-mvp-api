@@ -113,11 +113,14 @@ async function getExistingAiInitiative(companyId) {
   return rows[0] || null;
 }
 
-async function upsertInitiative(companyId, data, existingId) {
+async function upsertInitiative(companyId, data, existingId, detailUrl) {
   const pool = getPool();
+  // detail_url は ApprovedCompanies.declaration_pdf_url を渡す想定。
+  // Phase 7-2 fix: 配信カードの「詳細を見る」ボタン用に保存する。
   const params = [
     data.title,
     data.summary,
+    detailUrl || null,
     data.category,
     JSON.stringify(data.industry_tags || []),
     JSON.stringify(data.target_themes || []),
@@ -126,7 +129,7 @@ async function upsertInitiative(companyId, data, existingId) {
   if (existingId) {
     await pool.execute(
       "UPDATE Initiatives SET " +
-      "  title = ?, summary = ?, category = ?, " +
+      "  title = ?, summary = ?, detail_url = ?, category = ?, " +
       "  industry_tags = CAST(? AS JSON), target_themes = CAST(? AS JSON), " +
       "  bullet_points = CAST(? AS JSON), " +
       "  updated_at = CURRENT_TIMESTAMP(3) " +
@@ -137,10 +140,10 @@ async function upsertInitiative(companyId, data, existingId) {
   }
   const [result] = await pool.execute(
     "INSERT INTO Initiatives " +
-    "  (approved_company_id, title, summary, category, " +
+    "  (approved_company_id, title, summary, detail_url, category, " +
     "   industry_tags, target_themes, bullet_points, " +
     "   status, source) " +
-    "VALUES (?, ?, ?, ?, " +
+    "VALUES (?, ?, ?, ?, ?, " +
     "        CAST(? AS JSON), CAST(? AS JSON), CAST(? AS JSON), " +
     "        'draft', 'ai_generated')",
     [companyId, ...params]
@@ -213,7 +216,7 @@ async function processOne(company, args) {
 
   // DB UPSERT
   const existing = await getExistingAiInitiative(ctx.companyId);
-  const result = await upsertInitiative(ctx.companyId, initData, existing && existing.id);
+  const result = await upsertInitiative(ctx.companyId, initData, existing && existing.id, ctx.pdfUrl);
   console.log("  ✓ DB " + result.mode + ": Initiative id=" + result.id + " (status=draft)");
 
   return { status: "ok", mode: result.mode, initiativeId: result.id };

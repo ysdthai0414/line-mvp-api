@@ -336,13 +336,24 @@ async function runProfileGeneration(client, args) {
       profile,
     });
 
+    // Phase 7-1+：AI が代表者名を抽出できていれば display_name を上書き
+    // （LINE 表示名より公式な代表取締役名を優先したい）
+    if (profile && profile.representative_name) {
+      try {
+        await setDisplayName(userId, profile.representative_name);
+        displayName = profile.representative_name; // Flex に渡す表示名も更新
+      } catch (e) {
+        console.warn("[handlers] save representative_name failed:", e.message);
+      }
+    }
+
     const flex = buildProfileConfirmFlex({
       companyName,
       companyUrl,
       profile,
       salesTier,
       annualSales,
-      displayName, // Phase 7-1（args.displayName または DB からの取得）
+      displayName, // Phase 7-1（AI抽出 > LINE名 > null の優先順位）
     });
 
     await client.pushMessage({ to: userId, messages: [flex] });
