@@ -47,6 +47,24 @@ async function findApprovedCompanies(normalizedName) {
   return rows;
 }
 
+/**
+ * 正規化済み社名 + 都道府県 で絞り込み検索。
+ * 同名衝突解消のため2段目の照合に使う。
+ *  prefecture が空文字/null の場合は findApprovedCompanies と同じ挙動。
+ */
+async function findApprovedCompaniesWithPrefecture(normalizedName, prefecture) {
+  if (!normalizedName) return [];
+  if (!prefecture) return findApprovedCompanies(normalizedName);
+  const p = getPool();
+  const [rows] = await p.execute(
+    "SELECT * FROM ApprovedCompanies " +
+    "WHERE company_name_normalized = ? AND prefecture = ? " +
+    "ORDER BY id LIMIT 5",
+    [normalizedName, prefecture]
+  );
+  return rows;
+}
+
 function classifySalesTier(annualSales) {
   if (annualSales == null) return null;
   const oku = Number(annualSales) / 100000000;
@@ -84,6 +102,43 @@ async function markNotApproved(lineUserId, companyName, companyUrl) {
     "  updated_at = CURRENT_TIMESTAMP(3)",
     [lineUserId, companyName, companyUrl]
   );
+}
+
+/**
+ * 同名衝突時に都道府県の選択を待つ状態に遷移させる。
+ * 入力された 会社名・URL は pending_* に保存し、postback で都道府県が
+ * 選択されたタイミングで再照合に使う。
+ */
+async function saveAwaitingPrefecture(lineUserId, companyName, companyUrl) {
+  const p = getPool();
+  await p.execute(
+    "INSERT INTO Users " +
+    "(line_user_id, state, pending_company_name, pending_company_url) " +
+    "VALUES (?, 'AWAITING_PREFECTURE', ?, ?) " +
+    "ON DUPLICATE KEY UPDATE " +
+    "  state = 'AWAITING_PREFECTURE', " +
+    "  pending_company_name = VALUES(pending_company_name), " +
+    "  pending_company_url = VALUES(pending_company_url), " +
+    "  pending_profile_json = NULL, " +
+    "  updated_at = CURRENT_TIMESTAMP(3)",
+    [lineUserId, companyName, companyUrl]
+  );
+}
+
+/** AWAITING_PREFECTURE 中に保存しておいた会社名/URLを取り出す */
+async function getPendingCompanyInput(lineUserId) {
+  const p = getPool();
+  const [rows] = await p.execute(
+    "SELECT pending_company_name, pending_company_url, state " +
+    "FROM Users WHERE line_user_id = ?",
+    [lineUserId]
+  );
+  if (rows.length === 0) return null;
+  return {
+    companyName: rows[0].pending_company_name || null,
+    companyUrl: rows[0].pending_company_url || null,
+    state: rows[0].state || null,
+  };
 }
 
 async function savePendingProfile(args) {
@@ -295,9 +350,12 @@ async function consumePendingInterestPick(lineUserId) {
 module.exports = {
   getPool,
   findApprovedCompanies,
+  findApprovedCompaniesWithPrefecture,
   classifySalesTier,
   getOrCreateUser,
   markNotApproved,
+  saveAwaitingPrefecture,
+  getPendingCompanyInput,
   savePendingProfile,
   commitPendingProfile,
   discardPendingProfile,

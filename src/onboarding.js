@@ -7,6 +7,7 @@ const { generateCompanyProfile } = require("./ai");
 const { normalizeCompanyName } = require("./match");
 const {
   findApprovedCompanies,
+  findApprovedCompaniesWithPrefecture,
   classifySalesTier,
 } = require("./db");
 
@@ -43,6 +44,47 @@ async function checkApproval(companyName) {
     ambiguous: candidates.length > 1,
     allCandidates: candidates,
   };
+}
+
+/**
+ * 同名衝突 → 都道府県選択 後の再照合。
+ * 戻り値:
+ *   { matched: true,  candidate, ambiguous, allCandidates }
+ *     ambiguous=true は同名かつ同都道府県が2社以上あるレアケース。
+ *     呼び出し側で「先頭採用 + 警告ログ」する想定。
+ *   { matched: false }
+ *     都道府県で絞ったら0件になった（ユーザー入力ミスの可能性）
+ */
+async function resolveByPrefecture(companyName, prefecture) {
+  const normalized = normalizeCompanyName(companyName);
+  const candidates = await findApprovedCompaniesWithPrefecture(
+    normalized,
+    prefecture
+  );
+  if (candidates.length === 0) return { matched: false };
+  return {
+    matched: true,
+    candidate: candidates[0],
+    ambiguous: candidates.length > 1,
+    allCandidates: candidates,
+  };
+}
+
+/**
+ * 候補リストから「重複を除いたユニークな都道府県の配列」を返す。
+ * NULL は除外、出現順を保つ。
+ */
+function uniquePrefectures(candidates) {
+  const seen = new Set();
+  const out = [];
+  for (const c of candidates || []) {
+    const p = c && c.prefecture;
+    if (!p) continue;
+    if (seen.has(p)) continue;
+    seen.add(p);
+    out.push(p);
+  }
+  return out;
 }
 
 /**
@@ -85,5 +127,7 @@ async function buildProfileForApproved({
 module.exports = {
   parseCompanyAndUrl,
   checkApproval,
+  resolveByPrefecture,
+  uniquePrefectures,
   buildProfileForApproved,
 };

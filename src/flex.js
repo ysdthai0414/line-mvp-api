@@ -426,10 +426,45 @@ function buildSingleDeliveryFlex(initiative) {
   };
 }
 
+// =====================================================================
+// 同名衝突時の都道府県選択 Quick Reply
+// =====================================================================
+
+/**
+ * 候補となる都道府県の配列から Quick Reply の items を組み立てる。
+ * 末尾に「やり直す」を1件付ける（既存の action=retry を再利用）。
+ *
+ * LINE の Quick Reply は最大13件。候補都道府県は実データ上 2〜3件想定だが、
+ * 念のため12件で切って末尾に retry を追加する。
+ */
+function buildPrefectureQuickReply(prefectures) {
+  const list = (prefectures || []).filter(Boolean).slice(0, 12);
+  const items = list.map((p) => ({
+    type: "action",
+    action: {
+      type: "postback",
+      label: p.length > 20 ? p.slice(0, 19) + "…" : p,
+      data: "action=prefecture&value=" + encodeURIComponent(p),
+      displayText: p,
+    },
+  }));
+  items.push({
+    type: "action",
+    action: {
+      type: "postback",
+      label: "やり直す",
+      data: "action=retry",
+      displayText: "やり直す",
+    },
+  });
+  return { items };
+}
+
 module.exports = {
   buildProfileConfirmFlex,
   buildDeliveryCarouselFlex,
   buildSingleDeliveryFlex,
   buildInitiativeBubble,
   buildReasonText,
+  buildPrefectureQuickReply,
 };

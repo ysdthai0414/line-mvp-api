@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "check": "node --check index.js && node --check src/handlers.js && node --check src/onboarding.js && node --check src/db.js && node --check src/scraper.js && node --check src/ai.js && node --check src/flex.js && node --check src/match.js && node --check src/recommend.js && node --check src/matching.js && node --check src/categories.js && node --check scripts/import-approved-companies.js && node --check scripts/run-delivery.js && node --check scripts/run-sql.js",
+    "check": "node --check index.js && node --check src/handlers.js && node --check src/onboarding.js && node --check src/db.js && node --check src/scraper.js && node --check src/ai.js && node --check src/flex.js && node --check src/match.js && node --check src/recommend.js && node --check src/matching.js && node --check src/categories.js && node --check scripts/import-approved-companies.js && node --check scripts/run-delivery.js && node --check scripts/run-sql.js && node --check scripts/test-prefecture-flow.js",
     "import:approved": "node scripts/import-approved-companies.js",
     "sql": "node scripts/run-sql.js",
     "deliver": "node scripts/run-delivery.js"
