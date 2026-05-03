@@ -54,7 +54,53 @@ function buildProfileConfirmFlex({
   profile,
   salesTier,
   annualSales,
+  displayName, // Phase 7-1：LINE のお名前を表示してユーザーに確認させる
 }) {
+  const headerContents = [
+    {
+      type: "text",
+      text: "AIが下調べした内容",
+      color: "#FFFFFF",
+      size: "sm",
+      weight: "bold",
+    },
+    {
+      type: "text",
+      text: companyName,
+      color: "#FFFFFF",
+      size: "xl",
+      weight: "bold",
+      wrap: true,
+      margin: "sm",
+    },
+    {
+      type: "text",
+      text: companyUrl,
+      color: "#CCDDEE",
+      size: "xs",
+      wrap: true,
+      margin: "xs",
+    },
+  ];
+
+  if (displayName) {
+    headerContents.push({
+      type: "text",
+      text: "代表者: " + displayName + " 様",
+      color: "#FFFFFF",
+      size: "xs",
+      margin: "sm",
+    });
+  }
+
+  headerContents.push({
+    type: "text",
+    text: "売上フェーズ: " + tierText(salesTier, annualSales),
+    color: "#FFFFFF",
+    size: "xs",
+    margin: displayName ? "xs" : "sm",
+  });
+
   const bubble = {
     type: "bubble",
     size: "mega",
@@ -63,39 +109,7 @@ function buildProfileConfirmFlex({
       layout: "vertical",
       backgroundColor: "#1F4E79",
       paddingAll: "16px",
-      contents: [
-        {
-          type: "text",
-          text: "AIが下調べした内容",
-          color: "#FFFFFF",
-          size: "sm",
-          weight: "bold",
-        },
-        {
-          type: "text",
-          text: companyName,
-          color: "#FFFFFF",
-          size: "xl",
-          weight: "bold",
-          wrap: true,
-          margin: "sm",
-        },
-        {
-          type: "text",
-          text: companyUrl,
-          color: "#CCDDEE",
-          size: "xs",
-          wrap: true,
-          margin: "xs",
-        },
-        {
-          type: "text",
-          text: "売上フェーズ: " + tierText(salesTier, annualSales),
-          color: "#FFFFFF",
-          size: "xs",
-          margin: "sm",
-        },
-      ],
+      contents: headerContents,
     },
     body: {
       type: "box",

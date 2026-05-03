@@ -1,6 +1,7 @@
 // LINE Webhook イベントハンドラ
 const {
   getOrCreateUser,
+  setDisplayName,
   markNotApproved,
   saveAwaitingPrefecture,
   getPendingCompanyInput,
@@ -128,6 +129,20 @@ const INTEREST_RECEIVED_FINAL_TEXT =
 async function handleFollow(client, event) {
   const userId = event.source.userId;
   if (userId) await getOrCreateUser(userId);
+
+  // Phase 7-1：LINE displayName を取得して保存（管理画面で実名を表示するため）。
+  // ブロック等で取得失敗してもオンボーディング自体は止めない。
+  if (userId) {
+    try {
+      const profile = await client.getProfile(userId);
+      if (profile && profile.displayName) {
+        await setDisplayName(userId, profile.displayName);
+      }
+    } catch (err) {
+      console.warn("[handlers] getProfile failed:", err.message);
+    }
+  }
+
   await client.replyMessage({
     replyToken: event.replyToken,
     messages: [{ type: "text", text: WELCOME_TEXT }],
@@ -140,6 +155,20 @@ async function handleTextMessage(client, event) {
   const text = event.message.text;
 
   const user = await getOrCreateUser(userId);
+
+  // Phase 7-1：display_name が未取得なら opportunistic に backfill
+  // （Phase 7-1 デプロイ前に友だち追加していた既存ユーザー対策）
+  if (!user.display_name) {
+    try {
+      const profile = await client.getProfile(userId);
+      if (profile && profile.displayName) {
+        await setDisplayName(userId, profile.displayName);
+        user.display_name = profile.displayName;
+      }
+    } catch (err) {
+      console.warn("[handlers] getProfile backfill failed:", err.message);
+    }
+  }
 
   if (user.state === "AWAITING_CONFIRM") {
     await client.replyMessage({
@@ -244,6 +273,7 @@ async function handleTextMessage(client, event) {
     companyName: parsed.companyName,
     companyUrl: parsed.companyUrl,
     approvedCompany: approval.candidate,
+    displayName: user.display_name || null, // Phase 7-1
   });
 }
 
@@ -253,6 +283,17 @@ async function handleTextMessage(client, event) {
  */
 async function runProfileGeneration(client, args) {
   const { userId, replyToken, companyName, companyUrl, approvedCompany } = args;
+
+  // Phase 7-1：displayName が args で渡されていなければ DB から取得
+  let displayName = args.displayName || null;
+  if (!displayName && userId) {
+    try {
+      const u = await getOrCreateUser(userId);
+      displayName = u.display_name || null;
+    } catch (e) {
+      console.warn("[handlers] runProfileGeneration: lookup display_name failed:", e.message);
+    }
+  }
 
   if (replyToken) {
     try {
@@ -301,6 +342,7 @@ async function runProfileGeneration(client, args) {
       profile,
       salesTier,
       annualSales,
+      displayName, // Phase 7-1（args.displayName または DB からの取得）
     });
 
     await client.pushMessage({ to: userId, messages: [flex] });

@@ -90,6 +90,21 @@ async function getOrCreateUser(lineUserId) {
   return { line_user_id: lineUserId, state: "NEW" };
 }
 
+/**
+ * LINE displayName を Users テーブルに保存。
+ * Phase 7-1：管理画面の /users で実名を表示するために handleFollow で呼び出す。
+ * 既存行が無ければ作成（state=NEW）してから上書き。
+ */
+async function setDisplayName(lineUserId, displayName) {
+  if (!lineUserId || !displayName) return;
+  const p = getPool();
+  await p.execute(
+    "INSERT INTO Users (line_user_id, state, display_name) VALUES (?, 'NEW', ?) " +
+    "ON DUPLICATE KEY UPDATE display_name = VALUES(display_name), updated_at = CURRENT_TIMESTAMP(3)",
+    [lineUserId, displayName]
+  );
+}
+
 async function markNotApproved(lineUserId, companyName, companyUrl) {
   const p = getPool();
   await p.execute(
@@ -529,6 +544,7 @@ module.exports = {
   findApprovedCompaniesWithPrefecture,
   classifySalesTier,
   getOrCreateUser,
+  setDisplayName,
   markNotApproved,
   saveAwaitingPrefecture,
   getPendingCompanyInput,
