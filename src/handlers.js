@@ -2,6 +2,7 @@
 const {
   getOrCreateUser,
   setDisplayName,
+  setUserState,
   markNotApproved,
   saveAwaitingPrefecture,
   getPendingCompanyInput,
@@ -60,6 +61,28 @@ const NOT_APPROVED_TEXT =
 const CONFIRMED_TEXT =
   "ありがとうございます！プロファイルを保存しました。\n" +
   "さっそく1件、御社向けに選んだ事例をお送りします👇";
+
+// Phase 7-1++：プロファイル確定後に代表者名を聞くテキスト（テンプレ）
+function buildRepNameQuestionText(currentDisplayName) {
+  const head =
+    "プロファイルを保存しました！\n" +
+    "最後に、代表者のお名前を教えてください（例：吉田 航平）。";
+  if (currentDisplayName) {
+    return (
+      head +
+      "\n\n現在「" +
+      currentDisplayName +
+      "」で登録されています。\n" +
+      "→ 合っていれば「OK」と返信。\n" +
+      "→ 違う場合は正しいお名前を返信してください。"
+    );
+  }
+  return head;
+}
+
+const REP_NAME_THANKS_TEXT =
+  "ありがとうございます！\n" +
+  "それでは、御社向けに選んだ事例を1件お送りします👇";
 
 const INITIAL_DELIVERY_INTRO =
   "今後は週1で「自社よりも先のフェーズ」の認可企業の取り組みを" +
@@ -168,6 +191,35 @@ async function handleTextMessage(client, event) {
     } catch (err) {
       console.warn("[handlers] getProfile backfill failed:", err.message);
     }
+  }
+
+  // Phase 7-1++：プロファイル確定後の「代表者名を教えてください」回答ハンドリング
+  if (user.state === "AWAITING_REP_NAME") {
+    const trimmed = (text || "").trim();
+    const isOk = /^(ok|OK|オッケー|オーケー|はい|それでOK|それでOK)$/i.test(trimmed);
+
+    // OK 以外（空でなければ）のテキストは新しい代表者名として保存
+    if (trimmed && !isOk) {
+      try {
+        await setDisplayName(userId, trimmed);
+      } catch (e) {
+        console.warn("[handlers] setDisplayName failed:", e.message);
+      }
+    }
+
+    // 状態を CONFIRMED に進めて、初回配信を push
+    try {
+      await setUserState(userId, "CONFIRMED");
+    } catch (e) {
+      console.warn("[handlers] setUserState CONFIRMED failed:", e.message);
+    }
+
+    await client.replyMessage({
+      replyToken: event.replyToken,
+      messages: [{ type: "text", text: REP_NAME_THANKS_TEXT }],
+    });
+    await pushFirstDelivery(client, userId);
+    return;
   }
 
   if (user.state === "AWAITING_CONFIRM") {
@@ -426,11 +478,20 @@ async function handlePostback(client, event) {
   if (action === "confirm") {
     try {
       await commitPendingProfile(userId);
+
+      // Phase 7-1++：first delivery の前に代表者名確認ステップを挟む
+      await setUserState(userId, "AWAITING_REP_NAME");
+      const fresh = await getOrCreateUser(userId);
+      const currentName = fresh && fresh.display_name ? fresh.display_name : null;
       await client.replyMessage({
         replyToken: event.replyToken,
-        messages: [{ type: "text", text: CONFIRMED_TEXT }],
+        messages: [
+          {
+            type: "text",
+            text: buildRepNameQuestionText(currentName),
+          },
+        ],
       });
-      await pushFirstDelivery(client, userId);
     } catch (err) {
       console.error("[handlers] commit failed:", err);
       await client.replyMessage({

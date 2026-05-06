@@ -105,6 +105,19 @@ async function setDisplayName(lineUserId, displayName) {
   );
 }
 
+/**
+ * Users.state を任意の値に更新する。
+ * Phase 7-1++：AWAITING_REP_NAME 等の遷移に使う。
+ */
+async function setUserState(lineUserId, newState) {
+  if (!lineUserId || !newState) return;
+  const p = getPool();
+  await p.execute(
+    "UPDATE Users SET state = ?, updated_at = CURRENT_TIMESTAMP(3) WHERE line_user_id = ?",
+    [newState, lineUserId]
+  );
+}
+
 async function markNotApproved(lineUserId, companyName, companyUrl) {
   const p = getPool();
   await p.execute(
@@ -545,6 +558,7 @@ module.exports = {
   classifySalesTier,
   getOrCreateUser,
   setDisplayName,
+  setUserState,
   markNotApproved,
   saveAwaitingPrefecture,
   getPendingCompanyInput,
