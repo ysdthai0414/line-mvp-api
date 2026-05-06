@@ -145,8 +145,10 @@ const INTEREST_RECEIVED_MORE_TEXT =
 const INTEREST_RECEIVED_FINAL_TEXT =
   "ありがとうございます！\n" +
   "「{cat}」も追加しました。\n\n" +
-  "選んでいただいたテーマに合った情報を、これからお届けします📨\n" +
-  "（後から追加・変更したくなったら、配信のフィードバックボタンから再度お選びください）";
+  "さっそく、選んでいただいたテーマに沿った事例を一件お送りします👇";
+
+const INTEREST_INTRO_FOR_TEST_DELIVERY =
+  "（テーマ更新後の最初の事例です）";
 
 /** follow（友だち追加）イベント */
 async function handleFollow(client, event) {
@@ -429,32 +431,37 @@ async function runProfileGeneration(client, args) {
  * オンボ確定直後に1件 push
  */
 async function pushFirstDelivery(client, lineUserId) {
+  return pushOneRecommendation(client, lineUserId, INITIAL_DELIVERY_INTRO);
+}
+
+/**
+ * 1 件のレコメンドを push する汎用関数。
+ * - オンボーディング完了直後の初回配信
+ * - 「マッチせず」→ 関心テーマ選択後の即時テスト配信
+ * など、任意の文脈で使い回せる。introText を null にすれば card だけ送る。
+ */
+async function pushOneRecommendation(client, lineUserId, introText) {
   try {
     const recs = await recommendForUser(lineUserId, 1);
     if (recs.length === 0) {
       console.log(
-        "[handlers] no initial recommendation for " +
-          lineUserId +
-          " (skip first delivery)"
+        "[handlers] no recommendation for " + lineUserId + " (skip push)"
       );
       return;
     }
     const init = recs[0];
     const flex = buildSingleDeliveryFlex(init);
-    await client.pushMessage({
-      to: lineUserId,
-      messages: [
-        { type: "text", text: INITIAL_DELIVERY_INTRO },
-        flex,
-      ],
-    });
+    const messages = [];
+    if (introText) messages.push({ type: "text", text: introText });
+    messages.push(flex);
+    await client.pushMessage({ to: lineUserId, messages });
     const pool = getPool();
     await pool.execute(
       "INSERT IGNORE INTO DeliveryLog (line_user_id, initiative_id) VALUES (?, ?)",
       [lineUserId, init.id]
     );
   } catch (err) {
-    console.error("[handlers] pushFirstDelivery failed:", err);
+    console.error("[handlers] pushOneRecommendation failed:", err);
   }
 }
 
@@ -785,7 +792,7 @@ async function handlePostback(client, event) {
           ],
         });
       } else {
-        // 打ち止め
+        // 打ち止め：reply で謝意 + 即時に 1 件テスト配信を push
         await client.replyMessage({
           replyToken: event.replyToken,
           messages: [
@@ -795,6 +802,8 @@ async function handlePostback(client, event) {
             },
           ],
         });
+        // 関心テーマ更新後の最新リコメンドを 1 件 push（既存の DeliveryLog でガード）
+        await pushOneRecommendation(client, userId, INTEREST_INTRO_FOR_TEST_DELIVERY);
       }
     } catch (err) {
       console.error("[handlers] interest failed:", err);
