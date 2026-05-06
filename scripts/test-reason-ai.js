@@ -31,15 +31,16 @@ function check(cond, name, detail) { if (cond) pass(name); else fail(name, detai
 async function main() {
   console.log("=== D1 reason_ai テスト ===");
   try {
-    console.log("\n[STEP 1] mockAi=true でモック文字列");
+    console.log("\n[STEP 1] mockAi=true で { reason, application } オブジェクト");
     const r1 = await reasonAi.generateReasonText({
       user: { companyName: "テスト株式会社", profile: {} },
       initiative: { title: "DX事例", category: "DX" },
       reasons: { industries: [], themes: [], interests: [] },
       mockAi: true,
     });
-    check(typeof r1 === "string" && r1.length > 0, "mockAi → 文字列を返す");
-    check(r1 === reasonAi.MOCK_REASON, "mockAi → MOCK_REASON と一致");
+    check(r1 && typeof r1 === "object", "mockAi → オブジェクトを返す");
+    check(r1 && r1.reason === reasonAi.MOCK_REASON, "mockAi → reason が MOCK_REASON と一致");
+    check(r1 && r1.application === reasonAi.MOCK_APPLICATION, "mockAi → application が MOCK_APPLICATION と一致");
 
     console.log("\n[STEP 2] REASON_AI_DISABLED=true で null");
     process.env.REASON_AI_DISABLED = "true";
@@ -106,17 +107,25 @@ async function main() {
     // attachDynamicReasons は内部で getLatestProfile を呼ぶので、ここはスキップして
     // 直接 reason_ai を recs に当てる検証で代替する。
     for (const r of recs) {
-      const text = await reasonAi.generateReasonText({
+      const result = await reasonAi.generateReasonText({
         user: { companyName: "テスト", profile: {} },
         initiative: r,
         reasons: r._reasons,
         mockAi: true,
       });
-      r._reasons._dynamicReason = text;
+      // Phase 7-3：戻り値はオブジェクト { reason, application }
+      if (result && typeof result === "object") {
+        r._reasons._dynamicReason = result.reason;
+        r._reasons._applicationText = result.application;
+      }
     }
     check(
       recs[0]._reasons._dynamicReason === reasonAi.MOCK_REASON,
       "rec[0]._dynamicReason === MOCK_REASON"
+    );
+    check(
+      recs[0]._reasons._applicationText === reasonAi.MOCK_APPLICATION,
+      "rec[0]._applicationText === MOCK_APPLICATION"
     );
     check(
       recs[1]._reasons._dynamicReason === reasonAi.MOCK_REASON,

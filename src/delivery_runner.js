@@ -81,15 +81,22 @@ async function attachDynamicReasons(lineUserId, recs, opts) {
 
   for (const r of recs) {
     try {
-      const text = await reasonAi.generateReasonText({
+      const result = await reasonAi.generateReasonText({
         user: userArg,
         initiative: r,
         reasons: r._reasons || {},
         mockAi: !!mockAi,
       });
-      if (text) {
+      // Phase 7-3：result は { reason, application } のオブジェクト。
+      // 旧仕様の string 戻り値とも後方互換になるよう両方をハンドル。
+      if (result) {
         r._reasons = r._reasons || {};
-        r._reasons._dynamicReason = text;
+        if (typeof result === "string") {
+          r._reasons._dynamicReason = result;
+        } else {
+          if (result.reason) r._reasons._dynamicReason = result.reason;
+          if (result.application) r._reasons._applicationText = result.application;
+        }
       }
     } catch (e) {
       if (logger) logger.warn("[delivery] reason_ai failed for init=" + r.id + ":", e.message);

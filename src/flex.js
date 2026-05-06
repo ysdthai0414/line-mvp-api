@@ -330,6 +330,38 @@ function buildInitiativeBubble(initiative) {
     });
   }
 
+  // Phase 7-3：御社への応用ポイント（reason_ai が生成した場合のみ）
+  const applicationText =
+    reasons && typeof reasons._applicationText === "string"
+      ? reasons._applicationText.trim()
+      : "";
+  if (applicationText) {
+    bodyContents.push({
+      type: "box",
+      layout: "vertical",
+      backgroundColor: "#FFF7E6",
+      cornerRadius: "md",
+      paddingAll: "8px",
+      contents: [
+        {
+          type: "text",
+          text: "💡 御社への応用ポイント",
+          size: "xxs",
+          color: "#A06800",
+          weight: "bold",
+        },
+        {
+          type: "text",
+          text: applicationText,
+          size: "xs",
+          color: "#333333",
+          wrap: true,
+          margin: "xs",
+        },
+      ],
+    });
+  }
+
   bubble.body = {
     type: "box",
     layout: "vertical",
