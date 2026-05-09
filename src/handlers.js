@@ -31,6 +31,7 @@ const {
 } = require("./flex");
 const { recordMatchingRequest } = require("./matching");
 const { recommendForUser } = require("./recommend");
+const { attachDynamicReasons } = require("./delivery_runner");
 const { buildCategoryQuickReply } = require("./categories");
 const { dispatchMenuPostback } = require("./menu_handlers");
 const {
@@ -449,6 +450,19 @@ async function pushOneRecommendation(client, lineUserId, introText) {
       );
       return;
     }
+
+    // Phase 7-3 fix：オンボ後の初回配信や関心テーマ更新後のテスト配信でも
+    // AI 動的推薦理由 + 応用ポイントを付与する（delivery_runner と同じ仕組み）。
+    // 失敗しても配信自体は止めずに静的テンプレにフォールバック。
+    try {
+      await attachDynamicReasons(lineUserId, recs, {
+        useDynamicReason: true,
+        logger: console,
+      });
+    } catch (e) {
+      console.warn("[handlers] attachDynamicReasons in pushOneRecommendation failed:", e.message);
+    }
+
     const init = recs[0];
     const flex = buildSingleDeliveryFlex(init);
     const messages = [];
