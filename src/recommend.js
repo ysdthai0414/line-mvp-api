@@ -187,13 +187,25 @@ function toKey(s) {
 }
 
 /**
- * フェーズフィルタ：候補企業の sales_tier が user より「上」かを判定。
+ * フェーズフィルタ：候補企業の sales_tier が user より厳密に「上」かを判定。
+ * 「次フェーズの参考」哲学を維持。
  */
 function isHigherPhase(userCtx, initiative) {
   if (!userCtx.salesTier) return true;
   const userRank = TIER_RANK[userCtx.salesTier] || 0;
   const initRank = TIER_RANK[initiative.company_sales_tier] || 0;
   return initRank > userRank;
+}
+
+/**
+ * 同 tier も含めて「同じ or 上」かを判定。
+ * recommendForUser のフォールバック用：上の tier が空の場合のみ使う。
+ */
+function isSameOrHigherPhase(userCtx, initiative) {
+  if (!userCtx.salesTier) return true;
+  const userRank = TIER_RANK[userCtx.salesTier] || 0;
+  const initRank = TIER_RANK[initiative.company_sales_tier] || 0;
+  return initRank >= userRank;
 }
 
 /**
@@ -206,8 +218,16 @@ async function recommendForUser(lineUserId, limit = 3) {
 
   const candidates = await getCandidateInitiatives(userCtx);
 
-  const scored = candidates
-    .filter((c) => isHigherPhase(userCtx, c))
+  // 第一候補：「次フェーズ」哲学を守って厳密に上の tier だけ
+  let pool = candidates.filter((c) => isHigherPhase(userCtx, c));
+
+  // フォールバック：上の tier が空（user がトップ層 or プール薄い時）のみ、
+  // 同 tier も含めて配信を確保。下位 tier には混ぜない。
+  if (pool.length === 0) {
+    pool = candidates.filter((c) => isSameOrHigherPhase(userCtx, c));
+  }
+
+  const scored = pool
     .map((c) => {
       const s = scoreInitiative(userCtx, c);
       return { ...c, _score: s.score, _reasons: s.reasons };
@@ -226,6 +246,7 @@ module.exports = {
   getCandidateInitiatives,
   scoreInitiative,
   isHigherPhase,
+  isSameOrHigherPhase,
   TIER_RANK,
   SCORE_WEIGHT,
   COLLAB_SCORE_CAP,
